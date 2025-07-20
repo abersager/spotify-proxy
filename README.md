@@ -4,25 +4,15 @@ A personal Spotify API proxy that you can deploy to your own Cloudflare Workers 
 
 ## 🚀 Deploy Your Spotify Proxy
 
-### Step 1: Fork This Repository
+### Step 1: Deploy to Cloudflare Workers
 
-**Get your own copy of the code:**
+**One-click deployment:**
 
-[![Use this template](https://img.shields.io/badge/Use%20this%20template-2ea44f?style=for-the-badge&logo=github)](https://github.com/abersager/spotify-proxy/generate)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/abersager/spotify-proxy)
 
-Click the "Use this template" button above to create your own repository.
+> **Note**: Cloudflare will automatically create a new repository for you during deployment
 
-### Step 2: Deploy to Cloudflare Workers
-
-**One-click deployment from your forked repository:**
-
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR-USERNAME/YOUR-REPO-NAME)
-
-> **Important**: Replace `YOUR-USERNAME/YOUR-REPO-NAME` in the URL above with your actual GitHub username and repository name
-
-**🎯 Quick Setup Helper**: Use our [**Setup Assistant**](https://abersager.github.io/spotify-proxy/) to automatically generate your deployment link with your repository details.
-
-### Step 3: Get Your Cloudflare Credentials
+### Step 2: Get Your Cloudflare Credentials
 
 You'll need these during deployment:
 
@@ -48,12 +38,12 @@ You'll need these during deployment:
 
 ## ✨ Features
 
-- **One-click deployment** - from your forked repository
+- **One-click deployment** - Cloudflare automatically creates your repository
 - **No ongoing cost** (free tier is sufficient)
-- **🔒 Built-in authentication** - secure your proxy with username/password
-- **Web-based setup** - no CLI required
+- **🔒 Built-in API key authentication** - secure your proxy with encrypted secrets
+- **Web-based setup** - no CLI required, all configuration via Cloudflare Dashboard
 - **Secure OAuth flow** for Spotify authentication
-- **KV storage** for credentials and tokens
+- **Cloudflare secrets** for secure credential storage
 - **Simple API endpoints** for current track, recent tracks, and more
 - **Beautiful setup UI** for easy configuration
 
@@ -61,11 +51,14 @@ You'll need these during deployment:
 
 After deployment:
 
-### 1. **🔒 Set Up Authentication**
+### 1. **🔒 Configure Secrets**
 - Visit your deployed worker URL
-- You'll be redirected to `/auth-setup`
-- Choose a username and strong password
-- This secures your personal Spotify data from public access
+- You'll be redirected to `/credentials` for guided setup
+- Generate a secure API key (or create your own)
+- Set up all three secrets via Cloudflare Dashboard:
+  - `API_KEY` - Your generated API key
+  - `SPOTIFY_CLIENT_ID` - Your Spotify app's Client ID
+  - `SPOTIFY_CLIENT_SECRET` - Your Spotify app's Client Secret
 
 ### 2. **Create Spotify App**
 - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
@@ -73,9 +66,9 @@ After deployment:
 - Note your **Client ID** and **Client Secret**
 - Add callback URL: `https://your-worker-name.your-subdomain.workers.dev/callback`
 
-### 3. **Complete Web Setup**
-- Enter your Spotify credentials in the web form
-- Click "Connect Spotify Account" to authorize
+### 3. **Complete OAuth Setup**
+- After setting secrets, visit `/setup` to connect your Spotify account
+- Authorize the app to access your Spotify data
 - Test your endpoints!
 
 ### 4. **Start Using Your Proxy**
@@ -83,70 +76,9 @@ After deployment:
 - `/recent` - Recently played tracks
 - `/health` - Status check
 
-**🔐 Authentication Required**: All endpoints (except `/health`) require your username/password via Basic Auth.
+**🔐 Authentication Required**: All endpoints (except `/health`) require your API key via `Authorization: Bearer YOUR_API_KEY` header.
 
-## 🔄 Keeping Your Fork Updated
 
-Your forked repository can automatically stay in sync with upstream improvements and bug fixes.
-
-### 🤖 Automatic Sync (Recommended)
-
-Your repository includes a GitHub Action that automatically syncs with the upstream repository:
-
-- **Runs daily** at 2 AM UTC
-- **Creates a Pull Request** when updates are available
-- **Handles conflicts** gracefully with manual fallback
-- **Manual trigger** available from the Actions tab
-
-The sync action is enabled by default. When updates are available, you'll get a PR like this:
-
-> 🔄 **Sync with upstream repository**
->
-> This PR automatically syncs your repository with the latest changes...
-
-Simply review and merge the PR to get the latest updates!
-
-### 🔧 Manual Sync
-
-If you prefer manual control or need to resolve conflicts:
-
-<details>
-<summary>Click to see manual sync instructions</summary>
-
-```bash
-# Add upstream remote (one time setup)
-git remote add upstream https://github.com/abersager/spotify-proxy.git
-
-# Fetch latest changes
-git fetch upstream
-
-# Merge upstream changes
-git checkout main
-git merge upstream/main
-
-# Push to your fork
-git push origin main
-```
-
-If there are conflicts, resolve them manually:
-```bash
-# After git merge upstream/main shows conflicts
-git status                    # See conflicted files
-# Edit files to resolve conflicts
-git add .                     # Stage resolved files
-git commit -m "Resolve merge conflicts"
-git push origin main
-```
-
-</details>
-
-### 🔀 Using GitHub's Sync Fork Button
-
-GitHub also provides a "Sync fork" button on your repository page:
-
-1. Go to your forked repository on GitHub
-2. Click the "Sync fork" button (if behind upstream)
-3. Click "Update branch" to sync
 
 ## 🔧 Development
 
@@ -216,17 +148,21 @@ The worker will be available at `http://localhost:8787`
 
 ## 🔐 Security
 
-- OAuth tokens are stored securely in Cloudflare KV
-- Client credentials are stored as Cloudflare Workers secrets
+- OAuth tokens are stored temporarily in Cloudflare KV
+- All credentials stored as encrypted Cloudflare Workers secrets
 - All API calls are server-side to prevent credential exposure
 - CORS headers are properly configured for web applications
 
 ## 📖 Configuration
 
-The worker uses the following environment variables:
+The worker uses the following secrets and environment variables:
 
-- `SPOTIFY_CLIENT_ID` - Your Spotify app's client ID (secret)
-- `SPOTIFY_CLIENT_SECRET` - Your Spotify app's client secret (secret)
+**Secrets** (configured via Cloudflare Dashboard):
+- `API_KEY` - Your secure API key for authentication
+- `SPOTIFY_CLIENT_ID` - Your Spotify app's client ID
+- `SPOTIFY_CLIENT_SECRET` - Your Spotify app's client secret
+
+**Environment Variables**:
 - `ENVIRONMENT` - Environment name (set in wrangler.toml)
 
 ## 🤝 Contributing
@@ -246,13 +182,7 @@ If you encounter issues:
 3. **OAuth errors**: Make sure your Spotify app callback URL matches your worker URL
 4. **Still stuck**: Open an issue in this repository
 
-## 🆔 Repository URLs
 
-When using the manual deploy link, replace the repository URL with your own:
-- Template: `https://github.com/YOUR-USERNAME/YOUR-REPO-NAME/actions/workflows/manual-deploy.yml`
-- Example: `https://github.com/abersager/spotify-proxy-test/actions/workflows/manual-deploy.yml`
-
-**🔧 Easy Link Generator**: Use the [**Web Deploy Tool**](https://abersager.github.io/spotify-proxy/) to automatically create your deploy link!
 
 ## 🛟 Troubleshooting
 

@@ -79,11 +79,13 @@ export default {
  */
 async function handleRoot(request: Request, env: Env): Promise<Response> {
   const hasApiKey = !!env.API_KEY;
-  const storedCredentials = await getStoredCredentials(env);
+  const hasSpotifyCredentials = !!(
+    env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET
+  );
   const storedTokens = await getStoredTokens(env);
 
-  // If no API key, redirect to credentials setup
-  if (!hasApiKey) {
+  // If no API key or Spotify credentials, redirect to credentials setup
+  if (!hasApiKey || !hasSpotifyCredentials) {
     return Response.redirect(
       new URL("/credentials", request.url).toString(),
       302
@@ -94,7 +96,7 @@ async function handleRoot(request: Request, env: Env): Promise<Response> {
   let nextAction = "/credentials";
   let nextActionText = "Setup Credentials";
 
-  if (storedCredentials) {
+  if (hasSpotifyCredentials) {
     if (storedTokens) {
       setupStatus = "complete";
       nextAction = "/now-playing";
@@ -259,11 +261,13 @@ async function handleRoot(request: Request, env: Env): Promise<Response> {
  * Handle setup endpoint - OAuth configuration
  */
 async function handleSetup(request: Request, env: Env): Promise<Response> {
-  // Check if we have stored credentials
-  const storedCredentials = await getStoredCredentials(env);
+  // Check if we have Spotify credentials configured as secrets
+  const hasSpotifyCredentials = !!(
+    env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET
+  );
 
-  if (!storedCredentials) {
-    // No credentials stored, redirect to credentials page
+  if (!hasSpotifyCredentials) {
+    // No credentials configured, redirect to credentials page
     return Response.redirect(
       new URL("/credentials", request.url).toString(),
       302
@@ -285,7 +289,7 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
     const authUrl =
       `https://accounts.spotify.com/authorize?` +
       `response_type=code&` +
-      `client_id=${storedCredentials.client_id}&` +
+      `client_id=${env.SPOTIFY_CLIENT_ID}&` +
       `scope=${encodeURIComponent(scope)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `state=${state}`;
@@ -310,78 +314,7 @@ async function handleCredentials(
   request: Request,
   env: Env
 ): Promise<Response> {
-  if (request.method === "POST") {
-    try {
-      const formData = await request.formData();
-      const clientId = formData.get("client_id") as string;
-      const clientSecret = formData.get("client_secret") as string;
-
-      // Validate credentials
-      if (!clientId || !clientSecret) {
-        return new Response(
-          await getCredentialsHTML(
-            "Please provide both Client ID and Client Secret",
-            request.url
-          ),
-          {
-            status: 400,
-            headers: {
-              "Content-Type": "text/html",
-              ...corsHeaders,
-            },
-          }
-        );
-      }
-
-      // Basic validation for Spotify Client ID format
-      if (clientId.length < 30 || !clientId.match(/^[a-zA-Z0-9]+$/)) {
-        return new Response(
-          await getCredentialsHTML(
-            "Invalid Client ID format. Please check your Spotify app credentials.",
-            request.url
-          ),
-          {
-            status: 400,
-            headers: {
-              "Content-Type": "text/html",
-              ...corsHeaders,
-            },
-          }
-        );
-      }
-
-      // Store credentials in KV
-      const credentials = {
-        client_id: clientId,
-        client_secret: clientSecret,
-        created_at: new Date().toISOString(),
-      };
-
-      await env.SPOTIFY_DATA.put(
-        "spotify_credentials",
-        JSON.stringify(credentials)
-      );
-
-      // Redirect to setup page
-      return Response.redirect(new URL("/setup", request.url).toString(), 302);
-    } catch (error) {
-      return new Response(
-        await getCredentialsHTML(
-          "Error processing credentials. Please try again.",
-          request.url
-        ),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "text/html",
-            ...corsHeaders,
-          },
-        }
-      );
-    }
-  }
-
-  // GET request - show credentials form
+  // Show credentials setup page (secrets-based approach only)
   const html = await getCredentialsHTML(undefined, request.url);
   return new Response(html, {
     headers: {
@@ -568,9 +501,10 @@ async function handleRecent(request: Request, env: Env): Promise<Response> {
  * Handle health check endpoint
  */
 async function handleHealth(request: Request, env: Env): Promise<Response> {
-  const credentials = await getStoredCredentials(env);
   const tokens = await getStoredTokens(env);
-  const hasValidCredentials = credentials !== null;
+  const hasValidCredentials = !!(
+    env.SPOTIFY_CLIENT_ID && env.SPOTIFY_CLIENT_SECRET
+  );
   const hasValidTokens = tokens !== null;
   const hasApiKey = !!env.API_KEY;
 
@@ -638,12 +572,11 @@ async function exchangeCodeForTokens(
   env: Env
 ) {
   const redirectUri = new URL(callbackUrl).origin + "/callback";
-  const credentials = await getStoredCredentials(env);
 
-  if (!credentials) {
+  if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET) {
     return {
       success: false,
-      error: "No Spotify credentials found. Please complete setup first.",
+      error: "No Spotify credentials configured. Please complete setup first.",
     };
   }
 
@@ -652,7 +585,7 @@ async function exchangeCodeForTokens(
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${btoa(
-        `${credentials.client_id}:${credentials.client_secret}`
+        `${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`
       )}`,
     },
     body: new URLSearchParams({
@@ -671,11 +604,6 @@ async function exchangeCodeForTokens(
 
   const data = await response.json();
   return { success: true, data };
-}
-
-async function getStoredCredentials(env: Env) {
-  const credentialsJson = await env.SPOTIFY_DATA.get("spotify_credentials");
-  return credentialsJson ? JSON.parse(credentialsJson) : null;
 }
 
 async function getStoredTokens(env: Env) {
@@ -993,37 +921,7 @@ async function getCredentialsHTML(
           </div>
         </div>
 
-        <!-- Legacy Form (will be removed later) -->
-        <div class="section" style="opacity: 0.5; border-color: #ccc;">
-          <h2>📦 Legacy: KV Storage (Deprecated)</h2>
-          <p><em>This form stores credentials in KV. For better security, use the Cloudflare secrets method above.</em></p>
 
-          <form method="POST">
-            <div class="form-group">
-              <label for="client_id">Spotify Client ID:</label>
-              <input
-                type="text"
-                id="client_id"
-                name="client_id"
-                placeholder="e.g., 1234567890abcdef1234567890abcdef"
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="client_secret">Spotify Client Secret:</label>
-              <input
-                type="password"
-                id="client_secret"
-                name="client_secret"
-                placeholder="Your app's client secret"
-                required
-              />
-            </div>
-
-            <button type="submit" class="button">💾 Save to KV (Legacy)</button>
-          </form>
-        </div>
 
         <!-- Next Steps -->
         <div class="step">
