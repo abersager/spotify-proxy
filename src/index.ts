@@ -35,8 +35,13 @@ export default {
     }
 
     try {
-      // Require API key authentication for all endpoints except health and credentials setup
-      const publicEndpoints = ["/health", "/credentials"];
+      // Require API key authentication for all endpoints except health and setup endpoints
+      const publicEndpoints = [
+        "/health",
+        "/credentials",
+        "/setup",
+        "/callback",
+      ];
       if (!publicEndpoints.includes(pathname)) {
         const authResult = await requireApiKey(request, env);
         if (authResult) return authResult; // Return 401 if auth failed

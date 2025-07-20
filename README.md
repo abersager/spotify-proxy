@@ -12,9 +12,13 @@ A personal Spotify API proxy that you can deploy to your own Cloudflare Workers 
 
 > **Note**: Cloudflare will automatically create a new repository for you during deployment
 
-### Step 2: Get Your Cloudflare Credentials
+### Step 2: Complete Setup
 
-You'll need these during deployment:
+After deployment, **visit your worker URL** and you'll be automatically guided through the complete setup process - no additional tools needed!
+
+### Cloudflare Credentials (for deployment)
+
+You'll need these during the initial deployment:
 
 #### 🔑 Cloudflare API Token
 
@@ -34,7 +38,7 @@ You'll need these during deployment:
 2. After login, copy the URL from your browser address bar
 3. Extract the Account ID from the URL (e.g., `https://dash.cloudflare.com/abc123.../home`)
 
-**💡 Tip**: Our [Setup Assistant](https://abersager.github.io/spotify-proxy/) can help extract your Account ID automatically from the URL!
+**💡 Tip**: You can find your Account ID in the URL after logging into Cloudflare Dashboard
 
 ## ✨ Features
 
@@ -49,34 +53,36 @@ You'll need these during deployment:
 
 ## 🎯 Setup Process
 
-After deployment:
+After deployment, **simply visit your worker URL** - you'll be automatically guided through the entire setup:
 
-### 1. **🔒 Configure Secrets**
-- Visit your deployed worker URL
-- You'll be redirected to `/credentials` for guided setup
-- Generate a secure API key (or create your own)
-- Set up all three secrets via Cloudflare Dashboard:
+### 1. **🔒 Automated Secret Setup**
+- Worker automatically redirects you to `/credentials`
+- Generates a secure API key for you (or create your own)
+- Provides step-by-step instructions for setting secrets in Cloudflare Dashboard
+- All three secrets configured via web interface:
   - `API_KEY` - Your generated API key
   - `SPOTIFY_CLIENT_ID` - Your Spotify app's Client ID
   - `SPOTIFY_CLIENT_SECRET` - Your Spotify app's Client Secret
 
-### 2. **Create Spotify App**
-- Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-- Create a new app
-- Note your **Client ID** and **Client Secret**
-- Add callback URL: `https://your-worker-name.your-subdomain.workers.dev/callback`
+### 2. **🎵 Spotify App Creation**
+- Worker provides direct links to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+- Shows you exactly which callback URL to use
+- Clear instructions for getting your credentials
 
-### 3. **Complete OAuth Setup**
-- After setting secrets, visit `/setup` to connect your Spotify account
-- Authorize the app to access your Spotify data
-- Test your endpoints!
+### 3. **✅ One-Click OAuth**
+- Worker guides you through connecting your Spotify account
+- Handles all OAuth complexity automatically
+- Immediate confirmation when setup is complete
 
-### 4. **Start Using Your Proxy**
-- `/now-playing` - Current track
-- `/recent` - Recently played tracks
-- `/health` - Status check
+### 4. **🚀 Ready to Use**
+- All endpoints immediately available:
+  - `/now-playing` - Current track
+  - `/recent` - Recently played tracks
+  - `/health` - Status check
 
-**🔐 Authentication Required**: All endpoints (except `/health`) require your API key via `Authorization: Bearer YOUR_API_KEY` header.
+**🔐 Authentication**: All endpoints (except `/health`) require your API key via `Authorization: Bearer YOUR_API_KEY` header.
+
+> **✨ No external tools required** - everything is handled through the worker's built-in setup interface!
 
 
 
