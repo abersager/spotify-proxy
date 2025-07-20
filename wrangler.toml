@@ -18,6 +18,10 @@ preview_id = "d99f068858a5401cbf4463132959349e"
 [vars]
 ENVIRONMENT = "development"
 
-# For deployment, you'll need to set these secrets:
-# wrangler secret put SPOTIFY_CLIENT_ID
-# wrangler secret put SPOTIFY_CLIENT_SECRET
+# For deployment, you'll need to set these secrets via Cloudflare Dashboard:
+# API_KEY - Your secure API key for authentication
+# SPOTIFY_CLIENT_ID - Your Spotify app's Client ID
+# SPOTIFY_CLIENT_SECRET - Your Spotify app's Client Secret
+
+# All secrets can be set via the Cloudflare Dashboard:
+# Workers & Pages → Your Worker → Settings → Variables → Add variable (with Encrypt checked)

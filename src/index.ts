@@ -9,12 +9,8 @@ export interface Env {
   SPOTIFY_DATA: KVNamespace;
   SPOTIFY_CLIENT_ID: string;
   SPOTIFY_CLIENT_SECRET: string;
+  API_KEY: string;
   ENVIRONMENT: string;
-}
-
-interface AuthCredentials {
-  username: string;
-  passwordHash: string;
 }
 
 // CORS headers for all responses
@@ -39,22 +35,10 @@ export default {
     }
 
     try {
-      // Check if auth is configured
-      const authConfigured = await isAuthConfigured(env);
-
-      // Auth setup endpoint - always accessible
-      if (pathname === "/auth-setup") {
-        return handleAuthSetup(request, env);
-      }
-
-      // If auth not configured, redirect to auth setup (except for health check)
-      if (!authConfigured && pathname !== "/health") {
-        return redirectToAuthSetup();
-      }
-
-      // If auth is configured, require authentication for all endpoints except health
-      if (authConfigured && pathname !== "/health") {
-        const authResult = await requireAuth(request, env);
+      // Require API key authentication for all endpoints except health and credentials setup
+      const publicEndpoints = ["/health", "/credentials"];
+      if (!publicEndpoints.includes(pathname)) {
+        const authResult = await requireApiKey(request, env);
         if (authResult) return authResult; // Return 401 if auth failed
       }
 
@@ -94,19 +78,23 @@ export default {
  * Handle root endpoint - redirect to setup
  */
 async function handleRoot(request: Request, env: Env): Promise<Response> {
-  const authConfigured = await isAuthConfigured(env);
+  const hasApiKey = !!env.API_KEY;
   const storedCredentials = await getStoredCredentials(env);
   const storedTokens = await getStoredTokens(env);
+
+  // If no API key, redirect to credentials setup
+  if (!hasApiKey) {
+    return Response.redirect(
+      new URL("/credentials", request.url).toString(),
+      302
+    );
+  }
 
   let setupStatus = "not_started";
   let nextAction = "/credentials";
   let nextActionText = "Setup Credentials";
 
-  if (!authConfigured) {
-    setupStatus = "auth_required";
-    nextAction = "/auth-setup";
-    nextActionText = "Setup Authentication";
-  } else if (storedCredentials) {
+  if (storedCredentials) {
     if (storedTokens) {
       setupStatus = "complete";
       nextAction = "/now-playing";
@@ -190,6 +178,12 @@ async function handleRoot(request: Request, env: Env): Promise<Response> {
         <h1>🎵 Spotify Proxy</h1>
         <p>Your personal Spotify API proxy</p>
 
+        <div class="info" style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3>🔐 Secure Authentication</h3>
+          <p>This proxy is secured with API key authentication via Cloudflare secrets. Include your API key in requests:</p>
+          <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: monospace;">Authorization: Bearer YOUR_API_KEY</code>
+        </div>
+
         ${
           setupStatus === "complete"
             ? `
@@ -203,13 +197,6 @@ async function handleRoot(request: Request, env: Env): Promise<Response> {
           <div class="status partial">
             ⚠️ <strong>Credentials Set, OAuth Pending</strong><br>
             Connect your Spotify account to start using the proxy.
-          </div>
-        `
-            : setupStatus === "auth_required"
-            ? `
-          <div class="status pending">
-            🔒 <strong>Authentication Required</strong><br>
-            Set up username and password to secure your Spotify proxy.
           </div>
         `
             : `
@@ -581,22 +568,22 @@ async function handleRecent(request: Request, env: Env): Promise<Response> {
  * Handle health check endpoint
  */
 async function handleHealth(request: Request, env: Env): Promise<Response> {
-  const authConfigured = await isAuthConfigured(env);
   const credentials = await getStoredCredentials(env);
   const tokens = await getStoredTokens(env);
   const hasValidCredentials = credentials !== null;
   const hasValidTokens = tokens !== null;
+  const hasApiKey = !!env.API_KEY;
 
   const health = {
     status: "healthy",
     timestamp: new Date().toISOString(),
     environment: env.ENVIRONMENT || "unknown",
-    auth_configured: authConfigured,
+    api_key_configured: hasApiKey,
     credentials_configured: hasValidCredentials,
     oauth_configured: hasValidTokens,
-    setup_complete: authConfigured && hasValidCredentials && hasValidTokens,
-    next_step: !authConfigured
-      ? "Set up authentication at /auth-setup"
+    setup_complete: hasApiKey && hasValidCredentials && hasValidTokens,
+    next_step: !hasApiKey
+      ? "Configure secrets (API key + Spotify credentials) at /credentials"
       : !hasValidCredentials
       ? "Configure Spotify credentials at /credentials"
       : !hasValidTokens
@@ -604,7 +591,6 @@ async function handleHealth(request: Request, env: Env): Promise<Response> {
       : "Ready to use API endpoints",
     endpoints: {
       home: "/",
-      auth_setup: "/auth-setup",
       credentials: "/credentials",
       setup: "/setup",
       callback: "/callback",
@@ -631,6 +617,16 @@ function generateRandomString(length: number): string {
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
   for (let i = 0; i < length; i++) {
+    result += charset.charAt(Math.floor(Math.random() * charset.length));
+  }
+  return result;
+}
+
+function generateSecureApiKey(): string {
+  const charset =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let result = "";
+  for (let i = 0; i < 64; i++) {
     result += charset.charAt(Math.floor(Math.random() * charset.length));
   }
   return result;
@@ -793,15 +789,17 @@ async function getCredentialsHTML(
   const origin = requestUrl
     ? new URL(requestUrl).origin
     : "https://your-worker.workers.dev";
+  const apiKey = generateSecureApiKey();
+
   return `
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Spotify Proxy - Credentials</title>
+      <title>Spotify Proxy - Setup</title>
       <style>
         body {
           font-family: Arial, sans-serif;
-          max-width: 600px;
+          max-width: 800px;
           margin: 50px auto;
           padding: 20px;
           background-color: #f5f5f5;
@@ -819,13 +817,24 @@ async function getCredentialsHTML(
           color: white;
           text-decoration: none;
           border-radius: 25px;
-          margin: 10px 0;
+          margin: 10px 5px;
           border: none;
           cursor: pointer;
           font-size: 16px;
-          width: 100%;
         }
         .button:hover { background: #1ed760; }
+        .button.secondary {
+          background: #666;
+          font-size: 14px;
+          padding: 8px 16px;
+        }
+        .button.secondary:hover { background: #888; }
+        .button.dashboard {
+          background: #f38020;
+          font-size: 18px;
+          padding: 15px 30px;
+        }
+        .button.dashboard:hover { background: #e66f00; }
         .form-group {
           margin: 20px 0;
         }
@@ -855,280 +864,6 @@ async function getCredentialsHTML(
         }
         .info {
           background: #e3f2fd;
-          padding: 15px;
-          border-radius: 5px;
-          margin: 20px 0;
-        }
-        .step {
-          margin: 15px 0;
-          padding: 10px;
-          background: #f9f9f9;
-          border-left: 4px solid #1db954;
-        }
-        code {
-          background: #f5f5f5;
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-family: monospace;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🎵 Spotify App Credentials</h1>
-
-        ${errorMessage ? `<div class="error">❌ ${errorMessage}</div>` : ""}
-
-        <div class="info">
-          <h3>Setup Instructions:</h3>
-          <ol>
-            <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a></li>
-            <li>Create a new app (or use existing)</li>
-            <li>Copy your <strong>Client ID</strong> and <strong>Client Secret</strong></li>
-                        <li>Add this callback URL: <code>${origin}/callback</code></li>
-            <li>Enter your credentials below</li>
-          </ol>
-        </div>
-
-        <form method="POST">
-          <div class="form-group">
-            <label for="client_id">Spotify Client ID:</label>
-            <input
-              type="text"
-              id="client_id"
-              name="client_id"
-              placeholder="e.g., 1234567890abcdef1234567890abcdef"
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="client_secret">Spotify Client Secret:</label>
-            <input
-              type="password"
-              id="client_secret"
-              name="client_secret"
-              placeholder="Your app's client secret"
-              required
-            />
-          </div>
-
-          <button type="submit" class="button">💾 Save Credentials</button>
-        </form>
-
-        <div class="step">
-          <h3>⚠️ Security Note</h3>
-          <p>Your credentials are stored securely in Cloudflare KV and are only used to authenticate with Spotify's API. They are not shared with any third parties.</p>
-        </div>
-
-        <p><a href="/">&larr; Back to Home</a></p>
-      </div>
-    </body>
-    </html>
-  `;
-}
-
-/**
- * Authentication helper functions
- */
-
-async function isAuthConfigured(env: Env): Promise<boolean> {
-  const auth = await env.SPOTIFY_DATA.get("auth_credentials");
-  return auth !== null;
-}
-
-async function getAuthCredentials(env: Env): Promise<AuthCredentials | null> {
-  const auth = await env.SPOTIFY_DATA.get("auth_credentials");
-  return auth ? JSON.parse(auth) : null;
-}
-
-async function requireAuth(
-  request: Request,
-  env: Env
-): Promise<Response | null> {
-  const authHeader = request.headers.get("Authorization");
-
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    return new Response("Unauthorized", {
-      status: 401,
-      headers: {
-        ...corsHeaders,
-        "WWW-Authenticate": 'Basic realm="Spotify Proxy"',
-      },
-    });
-  }
-
-  const credentials = atob(authHeader.slice(6));
-  const [username, password] = credentials.split(":");
-
-  const storedAuth = await getAuthCredentials(env);
-  if (!storedAuth) {
-    return new Response("Authentication not configured", {
-      status: 500,
-      headers: corsHeaders,
-    });
-  }
-
-  const isValid =
-    (await verifyPassword(password, storedAuth.passwordHash)) &&
-    username === storedAuth.username;
-
-  if (!isValid) {
-    return new Response("Invalid credentials", {
-      status: 401,
-      headers: {
-        ...corsHeaders,
-        "WWW-Authenticate": 'Basic realm="Spotify Proxy"',
-      },
-    });
-  }
-
-  return null; // Auth successful
-}
-
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function verifyPassword(
-  password: string,
-  hash: string
-): Promise<boolean> {
-  const passwordHash = await hashPassword(password);
-  return passwordHash === hash;
-}
-
-function redirectToAuthSetup(): Response {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      ...corsHeaders,
-      Location: "/auth-setup",
-    },
-  });
-}
-
-async function handleAuthSetup(request: Request, env: Env): Promise<Response> {
-  if (request.method === "POST") {
-    try {
-      const formData = await request.formData();
-      const username = formData.get("username") as string;
-      const password = formData.get("password") as string;
-      const confirmPassword = formData.get("confirm_password") as string;
-
-      if (!username || !password || !confirmPassword) {
-        return new Response(await getAuthSetupHTML("All fields are required"), {
-          headers: { ...corsHeaders, "Content-Type": "text/html" },
-        });
-      }
-
-      if (password !== confirmPassword) {
-        return new Response(await getAuthSetupHTML("Passwords do not match"), {
-          headers: { ...corsHeaders, "Content-Type": "text/html" },
-        });
-      }
-
-      if (password.length < 8) {
-        return new Response(
-          await getAuthSetupHTML("Password must be at least 8 characters"),
-          {
-            headers: { ...corsHeaders, "Content-Type": "text/html" },
-          }
-        );
-      }
-
-      const passwordHash = await hashPassword(password);
-      const authCredentials: AuthCredentials = {
-        username,
-        passwordHash,
-      };
-
-      await env.SPOTIFY_DATA.put(
-        "auth_credentials",
-        JSON.stringify(authCredentials)
-      );
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          ...corsHeaders,
-          Location: "/",
-        },
-      });
-    } catch (error) {
-      return new Response(await getAuthSetupHTML("Error saving credentials"), {
-        headers: { ...corsHeaders, "Content-Type": "text/html" },
-      });
-    }
-  }
-
-  return new Response(await getAuthSetupHTML(), {
-    headers: { ...corsHeaders, "Content-Type": "text/html" },
-  });
-}
-
-async function getAuthSetupHTML(errorMessage?: string): Promise<string> {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Spotify Proxy - Authentication Setup</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          max-width: 600px;
-          margin: 50px auto;
-          padding: 20px;
-          background-color: #f5f5f5;
-        }
-        .container {
-          background: white;
-          padding: 30px;
-          border-radius: 10px;
-          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .button {
-          display: inline-block;
-          padding: 12px 24px;
-          background: #1db954;
-          color: white;
-          text-decoration: none;
-          border-radius: 25px;
-          margin: 10px 0;
-          border: none;
-          cursor: pointer;
-          font-size: 16px;
-          width: 100%;
-        }
-        .button:hover { background: #1ed760; }
-        .form-group {
-          margin: 20px 0;
-        }
-        .form-group label {
-          display: block;
-          margin-bottom: 5px;
-          font-weight: bold;
-        }
-        .form-group input {
-          width: 100%;
-          padding: 10px;
-          border: 2px solid #ddd;
-          border-radius: 5px;
-          font-size: 14px;
-          box-sizing: border-box;
-        }
-        .form-group input:focus {
-          border-color: #1db954;
-          outline: none;
-        }
-        .error {
-          background: #ffebee;
-          color: #c62828;
           padding: 15px;
           border-radius: 5px;
           margin: 20px 0;
@@ -1140,76 +875,288 @@ async function getAuthSetupHTML(errorMessage?: string): Promise<string> {
           border-radius: 5px;
           margin: 20px 0;
         }
-        .info {
-          background: #e3f2fd;
+        .step {
+          margin: 15px 0;
+          padding: 15px;
+          background: #f9f9f9;
+          border-left: 4px solid #1db954;
+          border-radius: 5px;
+        }
+        .step h3 {
+          margin-top: 0;
+          color: #1db954;
+        }
+        .api-key {
+          background: #fffde7;
+          border: 2px solid #ffc107;
           padding: 15px;
           border-radius: 5px;
-          margin: 20px 0;
+          margin: 10px 0;
+          font-family: monospace;
+          word-break: break-all;
+          font-size: 16px;
+          font-weight: bold;
+        }
+        .section {
+          margin: 30px 0;
+          padding: 20px;
+          border: 2px solid #e0e0e0;
+          border-radius: 10px;
+        }
+        .section h2 {
+          margin-top: 0;
+          color: #333;
+        }
+        code {
+          background: #f5f5f5;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: monospace;
         }
       </style>
     </head>
     <body>
       <div class="container">
-        <h1>🔒 Setup Authentication</h1>
+        <h1>🔐 Spotify Proxy Setup</h1>
 
         <div class="warning">
-          <h3>⚠️ Security Notice</h3>
-          <p>Your Spotify proxy contains personal data and should be protected. Set up a username and password to secure access to your worker.</p>
+          <h3>⚠️ Secure Setup Required</h3>
+          <p>Your Spotify proxy needs both an API key and Spotify credentials configured as Cloudflare secrets for maximum security.</p>
         </div>
 
         ${errorMessage ? `<div class="error">❌ ${errorMessage}</div>` : ""}
 
-        <form method="POST">
-          <div class="form-group">
-            <label for="username">Username:</label>
-            <input
-              type="text"
-              id="username"
-              name="username"
-              placeholder="Choose a username"
-              required
-              minlength="3"
-            />
+        <!-- API Key Section -->
+        <div class="section">
+          <h2>🔑 Step 1: API Key Setup</h2>
+
+          <div class="step">
+            <h3>Generate Your API Key</h3>
+            <p>We've generated a secure API key for you:</p>
+            <div class="api-key" id="apiKey">${apiKey}</div>
+            <button class="button secondary" onclick="copyApiKey()">📋 Copy API Key</button>
+            <button class="button secondary" onclick="generateNewKey()">🔄 Generate New Key</button>
           </div>
 
-          <div class="form-group">
-            <label for="password">Password:</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              placeholder="Choose a strong password (min 8 characters)"
-              required
-              minlength="8"
-            />
+          <div class="step">
+            <h3>Set API_KEY Secret in Cloudflare</h3>
+            <p><strong>Open your Cloudflare Workers dashboard:</strong></p>
+
+            <a href="https://dash.cloudflare.com/" target="_blank" class="button dashboard">🌩️ Open Cloudflare Dashboard</a>
+
+            <div style="margin: 20px 0;">
+              <p><strong>Instructions:</strong></p>
+              <ol>
+                <li>Navigate to <strong>Workers & Pages</strong> → <strong>Your Worker</strong></li>
+                <li>Go to <strong>Settings</strong> → <strong>Variables</strong></li>
+                <li>Under <strong>"Environment Variables"</strong>, click <strong>"Add variable"</strong></li>
+                <li>Set <strong>Variable name:</strong> <code>API_KEY</code></li>
+                <li>Set <strong>Value:</strong> paste the API key from above</li>
+                <li>✅ Make sure to check <strong>"Encrypt"</strong> (this makes it a secret)</li>
+                <li>Click <strong>"Save and deploy"</strong></li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <!-- Spotify Credentials Section -->
+        <div class="section">
+          <h2>🎵 Step 2: Spotify App Setup</h2>
+
+          <div class="info">
+            <h3>Get Spotify Credentials:</h3>
+            <ol>
+              <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a></li>
+              <li>Create a new app (or use existing)</li>
+              <li>Copy your <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+              <li>Add this callback URL: <code>${origin}/callback</code></li>
+            </ol>
           </div>
 
-          <div class="form-group">
-            <label for="confirm_password">Confirm Password:</label>
-            <input
-              type="password"
-              id="confirm_password"
-              name="confirm_password"
-              placeholder="Confirm your password"
-              required
-              minlength="8"
-            />
-          </div>
+          <div class="step">
+            <h3>Set Spotify Secrets in Cloudflare</h3>
+            <p>Follow the same process as above to set these two additional secrets:</p>
 
-          <button type="submit" class="button">🔒 Setup Authentication</button>
-        </form>
+            <div style="margin: 15px 0; padding: 10px; background: #f0f0f0; border-radius: 5px;">
+              <strong>Secret 1:</strong><br>
+              Variable name: <code>SPOTIFY_CLIENT_ID</code><br>
+              Value: Your Spotify Client ID<br>
+              ✅ Check "Encrypt"
+            </div>
+
+            <div style="margin: 15px 0; padding: 10px; background: #f0f0f0; border-radius: 5px;">
+              <strong>Secret 2:</strong><br>
+              Variable name: <code>SPOTIFY_CLIENT_SECRET</code><br>
+              Value: Your Spotify Client Secret<br>
+              ✅ Check "Encrypt"
+            </div>
+          </div>
+        </div>
+
+        <!-- Legacy Form (will be removed later) -->
+        <div class="section" style="opacity: 0.5; border-color: #ccc;">
+          <h2>📦 Legacy: KV Storage (Deprecated)</h2>
+          <p><em>This form stores credentials in KV. For better security, use the Cloudflare secrets method above.</em></p>
+
+          <form method="POST">
+            <div class="form-group">
+              <label for="client_id">Spotify Client ID:</label>
+              <input
+                type="text"
+                id="client_id"
+                name="client_id"
+                placeholder="e.g., 1234567890abcdef1234567890abcdef"
+                required
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="client_secret">Spotify Client Secret:</label>
+              <input
+                type="password"
+                id="client_secret"
+                name="client_secret"
+                placeholder="Your app's client secret"
+                required
+              />
+            </div>
+
+            <button type="submit" class="button">💾 Save to KV (Legacy)</button>
+          </form>
+        </div>
+
+        <!-- Next Steps -->
+        <div class="step">
+          <h3>🚀 Step 3: Complete Setup</h3>
+          <p>After setting all secrets in Cloudflare Dashboard:</p>
+          <ol>
+            <li>Refresh this page to verify secrets are configured</li>
+            <li>Proceed to OAuth setup to connect your Spotify account</li>
+            <li>Start using your secured Spotify proxy!</li>
+          </ol>
+
+          <div style="margin: 20px 0;">
+            <a href="/health" class="button" target="_blank">🔍 Check Configuration Status</a>
+            <a href="/setup" class="button">▶️ Continue to OAuth Setup</a>
+          </div>
+        </div>
 
         <div class="info">
-          <h3>📝 Next Steps</h3>
-          <p>After setting up authentication:</p>
-          <ol>
-            <li>You'll be prompted to enter these credentials when accessing your proxy</li>
-            <li>You can then set up your Spotify app credentials</li>
-            <li>Complete OAuth setup to start using your proxy</li>
-          </ol>
+          <h3>🔐 Why Use Cloudflare Secrets?</h3>
+          <ul>
+            <li><strong>Maximum Security</strong> - Encrypted and never exposed in code or logs</li>
+            <li><strong>Environment Isolation</strong> - Different secrets for development/production</li>
+            <li><strong>Industry Standard</strong> - Best practice for sensitive credentials</li>
+            <li><strong>No CLI Required</strong> - Set everything via the web dashboard</li>
+          </ul>
         </div>
+
+        <p><a href="/">&larr; Back to Home</a></p>
       </div>
+
+      <script>
+        let currentApiKey = '${apiKey}';
+
+        function copyApiKey() {
+          navigator.clipboard.writeText(currentApiKey).then(() => {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => btn.textContent = originalText, 2000);
+          });
+        }
+
+        function generateNewKey() {
+          // Generate a new secure API key
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+          let newKey = '';
+          for (let i = 0; i < 64; i++) {
+            newKey += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+
+          currentApiKey = newKey;
+          document.getElementById('apiKey').textContent = newKey;
+        }
+      </script>
     </body>
     </html>
   `;
+}
+
+/**
+ * Authentication helper functions
+ */
+
+async function requireApiKey(
+  request: Request,
+  env: Env
+): Promise<Response | null> {
+  const authHeader = request.headers.get("Authorization");
+
+  if (!authHeader) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "Missing Authorization header. Include 'Authorization: Bearer YOUR_API_KEY' in your request.",
+      }),
+      {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  if (!authHeader.startsWith("Bearer ")) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "Invalid Authorization header format. Use 'Authorization: Bearer YOUR_API_KEY'.",
+      }),
+      {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  const providedApiKey = authHeader.slice(7); // Remove "Bearer " prefix
+
+  if (!env.API_KEY) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "API key not configured. Please set up via Cloudflare dashboard.",
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  if (providedApiKey !== env.API_KEY) {
+    return new Response(
+      JSON.stringify({
+        error: "Invalid API key.",
+      }),
+      {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  return null; // Auth successful
 }
